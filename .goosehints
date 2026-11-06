@@ -1,0 +1,63 @@
+For prompt-eval invocations, use the supplied eval workflow and eval MCP tools;
+server-development instructions below apply only to development tasks.
+
+You are working on the Codex Desktop harness with local Ollama inference.
+
+You may read and improve this repository's source and tests, run tests, and use
+the codexdesktop MCP extension. Do not commit, push, publish, alter global model
+settings, or download replacement models unless the user requests it.
+
+Before changing behavior, add a meaningful regression test. Preserve request
+UUID ownership, immutable payloads, claim-before-Send, one active Desktop lane,
+and refusal to repeat uncertain submissions. MCP submit_request requires a UUID;
+generate one and retain it across transport retries. Never invent completion.
+
+The MCP extension is a stable development proxy. Source changes trigger a test
+gate in an isolated snapshot and replace its child only if passing. Call
+development_status to inspect state, revisions, and validation_log. Fix failed
+tests rather than removing assertions, weakening tests, or bypassing the gate.
+Run: uv run python -m unittest discover -s tests -q
+For native changes also compile and run .build/ax-picker-probe --self-test.
+These offline tests must not activate Desktop or post input events.
+
+Do not edit work/mcp-generations snapshots, generated state, production SQLite,
+or the stable supervisor to evade checks. Supervisor changes require restarting
+the extension; server/store changes reload automatically. Dependency changes
+require uv sync and development_retry. Test gates are quality controls, not a
+machine sandbox; operate within the user's requested task.
+
+Codex Desktop runs GPT-5.6 Sol. To execute a queued UUID when the user requests
+Desktop work, use the Developer shell from this repo:
+uv run desktop-harness ask --request-id THE_UUID
+Then get_response through MCP. Queueing alone does not send. A completed UUID
+prints its saved answer without resending. Keep Desktop foreground during GUI
+work. For same-chat experiments use the existing repl command; do not guess chat
+identity or bypass native binding checks. Do not open/control Desktop during
+server-only development or test tasks.
+
+Full-harness Developer tools support local shell and file edits. Discussion-only
+restrictions belong to the older REPL prototype, not the local server-development
+task. Codex's own approval settings remain in effect for Codex actions.
+
+Keep exploration bounded: inspect the tool catalog and relevant implementation/test
+only. After at most five targeted reads, choose one small useful improvement and
+start the regression test. Use rg and short line ranges; do not read the whole
+repository or historical reports before changing a single tool. Re-read only
+when a specific failing test or dependency requires it.
+
+Prefer these tools and read patterns:
+- Developer shell: rg --files src tests for discovery, then rg -n for symbols.
+- Batch independent searches and relevant sed -n line ranges into one shell call.
+- Developer analyze is optional for a large unfamiliar module; skip it when rg
+  already identifies the relevant function.
+- Developer edit for small exact replacements, write only for a new file.
+- Developer shell for targeted unittest discovery, then the full suite. Keep
+  failure output bounded but preserve/check the test process exit status.
+- MCP development_status for ready/revision verification; use its validation_log
+  path only if the candidate fails. Poll at a sensible interval while testing.
+Do not combine whole-file cat dumps, tree, analyze and repeated searches for the
+same information. Do not use od/byte inspection unless an encoding defect is
+actually demonstrated. If an unchanged read command is needed a third time, stop
+and describe what is missing rather than cycle among commands.
+
+For piped test output, use set -o pipefail and preserve the actual test exit code.

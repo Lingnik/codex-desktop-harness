@@ -1,0 +1,49 @@
+{
+  "active_provider": "ollama",
+  "providers": {
+    "ollama": {
+      "enabled": true,
+      "model": "qwen3.8:27b",
+      "configured": true
+    }
+  },
+  "GOOSE_MODE": "auto",
+  "GOOSE_MAX_TURNS": 50,
+  "GOOSE_MAX_TOKENS": 4096,
+  "GOOSE_TEMPERATURE": 0,
+  "GOOSE_INPUT_LIMIT": 131072,
+  "GOOSE_CONTEXT_LIMIT": 131072,
+  "GOOSE_THINKING_EFFORT": "off",
+  "GOOSE_DISABLE_KEYRING": true,
+  "GOOSE_DISABLE_SESSION_NAMING": true,
+  "GOOSE_TELEMETRY_ENABLED": false,
+  "extensions": {
+    "developer": {
+      "type": "builtin",
+      "name": "developer",
+      "enabled": true,
+      "bundled": true,
+      "timeout": 300
+    },
+    "codexdesktop": {
+      "type": "stdio",
+      "name": "codexdesktop",
+      "enabled": true,
+      "cmd": "@PYTHON@",
+      "args": [
+        "-m",
+        "desktop_harness.mcp_dev"
+      ],
+      "envs": {
+        "PYTHONPATH": "@ROOT@/src",
+        "HARNESS_DB": "@ROOT@/work/requests.sqlite3"
+      },
+      "env_keys": [],
+      "timeout": 900
+    }
+  },
+  "GOOSE_AUTO_COMPACT_THRESHOLD": 0.6,
+  "GOOSE_CONTEXT_STRATEGY": "summarize",
+  "GOOSE_TOOL_CALL_CUTOFF": 4,
+  "GOOSE_MAX_TOOL_RESPONSE_SIZE": 8000
+}

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Launch Goose against this repo's isolated local-inference profile."""
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+import subprocess
+from uuid import uuid4
+
+root = Path(__file__).resolve().parents[1]
+python = root / '.venv/bin/python'
+if not python.is_file():
+    raise SystemExit('Run uv sync --locked first')
+profile = root / 'work/goose/config/config.yaml'
+profile.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+if not profile.is_file():
+    template = (root / 'config/goose.json').read_text()
+    text = template.replace('@ROOT@', str(root)).replace('@PYTHON@', str(python))
+    json.loads(text)  # JSON is valid YAML; no extra YAML dependency is needed.
+    profile.write_text(text)
+    profile.chmod(0o600)
+env = {**os.environ, 'GOOSE_PATH_ROOT': str(root / 'work/goose'),
+       'GOOSE_PROVIDER': 'ollama', 'GOOSE_MODEL': os.getenv('HARNESS_MODEL', 'qwen3.8:27b'),
+       'OLLAMA_HOST': 'http://127.0.0.1:11434', 'GOOSE_DISABLE_KEYRING': '1',
+       'GOOSE_DISABLE_SESSION_NAMING': 'true', 'GOOSE_THINKING_EFFORT': 'off',
+       'GOOSE_INPUT_LIMIT': '131072', 'GOOSE_CONTEXT_LIMIT': '131072',
+       'GOOSE_MAX_TURNS': '50', 'GOOSE_AUTO_COMPACT_THRESHOLD': '0.6',
+       'GOOSE_CONTEXT_STRATEGY': 'summarize', 'GOOSE_TOOL_CALL_CUTOFF': '4',
+       'GOOSE_MAX_TOOL_RESPONSE_SIZE': '8000',
+       'GOOSE_MOIM_MESSAGE_TEXT': 'Use Developer shell with rg for search and batched bounded sed ranges for reads; use Developer edit for changes. After at most five exploration calls, begin the regression test for the requested change. Do not repeat unchanged read commands or cycle through the same files. Stop and explain a blocker instead.',
+       'GOOSE_MAX_TOKENS': '4096', 'HARNESS_DB': str(root / 'work/requests.sqlite3')}
+os.chdir(root)
+env.pop('HARNESS_EVAL_HEADLESS', None)
+env.pop('HARNESS_EVAL_REVIEW_ITERATION', None)
+arguments = sys.argv[1:] or ['session']
+rg_binary = shutil.which('rg') or '/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path/rg'
+if Path(rg_binary).is_file():
+    search_paths = [str(Path(rg_binary).parent), '/opt/homebrew/bin']
+    env['GOOSE_SEARCH_PATHS'] = json.dumps(search_paths)
+    env['PATH'] = os.pathsep.join(search_paths + [env.get('PATH', '')])
+if arguments[0] in ('eval', 'eval-resume', 'eval-retry', 'eval-review'):
+    review = arguments[0] == 'eval-review'
+    retry = arguments[0] == 'eval-retry'
+    resume = arguments[0] in ('eval-resume', 'eval-retry', 'eval-review')
+    headless = '--headless' in arguments
+    arguments = [arg for arg in arguments if arg != '--headless']
+    if len(arguments) != (3 if resume else 2):
+        raise SystemExit('Usage: scripts/goose-local eval PROJECT | eval-resume PROJECT ITERATION | eval-retry PROJECT ITERATION | eval-review PROJECT ITERATION')
+    project = arguments[1]
+    operation = str(uuid4())
+    if retry:
+        arguments[2] = subprocess.check_output([str(python), '-c',
+            "from desktop_harness.evals import Evaluations; import sys; print(Evaluations().retry_transport(sys.argv[1], int(sys.argv[2]), sys.argv[3])['iteration'])",
+            project, arguments[2], operation], env=env, text=True).strip()
+    elif resume:
+        operation = subprocess.check_output([str(python), '-c',
+            "from desktop_harness.evals import Evaluations; import sys; print(Evaluations().read(sys.argv[1], int(sys.argv[2]))['operation_id'])",
+            project, arguments[2]], env=env, text=True).strip()
+    # Separate full-response eval profile. Each launch is a fresh session.
+    env.update(HARNESS_EVAL_ONLY='1', HARNESS_EVAL_DESKTOP='0' if review else '1',
+               HARNESS_EVAL_PROJECT=project, HARNESS_EVAL_OPERATION_ID=operation,
+               GOOSE_PATH_ROOT=str(root / 'work/goose-evals'),
+               GOOSE_MAX_TOOL_RESPONSE_SIZE='200000',
+               GOOSE_MOIM_MESSAGE_TEXT='Perform one prompt iteration using eval MCP tools, then stop. Never repeat an uncertain Send. Assess response evidence against the scenario criteria.')
+    if review:
+        env['HARNESS_EVAL_REVIEW_ITERATION'] = arguments[2]
+    if headless:
+        env['HARNESS_EVAL_HEADLESS'] = '1'
+    eval_profile = root / 'work/goose-evals/config/config.yaml'
+    config = json.loads((root / 'config/goose.json').read_text().replace('@ROOT@', str(root)).replace('@PYTHON@', str(python)))
+    config['extensions']['developer']['enabled'] = True
+    eval_profile.parent.mkdir(parents=True, exist_ok=True)
+    eval_profile.write_text(json.dumps(config, indent=2) + '\n')
+    eval_profile.chmod(0o600)
+    # CLI validates the project name before constructing an output path.
+    prompt_file = root / 'work/eval-invocations' / (env['HARNESS_EVAL_OPERATION_ID'] + '.txt')
+    render = [str(python), '-m', 'desktop_harness.cli', 'eval-prompt', project,
+              '--output', str(prompt_file)]
+    if resume:
+        render += ['--review-iteration' if review else '--resume-iteration', arguments[2]]
+    subprocess.run(render, env=env, check=True)
+    prompt_file.write_text('HARNESS SESSION OPERATION: ' + operation + '\n' + prompt_file.read_text())
+    arguments = ['run', '--instructions', str(prompt_file)]
+    if not headless:
+        arguments += ['--interactive']
+# Goose caps consecutive identical calls; multi-command cycles still need steering.
+if arguments[0] in ('session', 'run') and not any(a.startswith('--max-tool-repetitions') for a in arguments):
+    arguments = [arguments[0], '--max-tool-repetitions', '3', *arguments[1:]]
+if arguments[0] == 'desktop':
+    executable = '/Applications/Goose.app/Contents/MacOS/Goose'
+    arguments = arguments[1:]
+else:
+    executable = shutil.which('goose')
+    if not executable:
+        raise SystemExit('Install block-goose-cli first')
+if env.get('HARNESS_EVAL_OPERATION_ID'):
+    arguments = ['-m', 'desktop_harness.transcripts', env['HARNESS_EVAL_PROJECT'],
+                 env['HARNESS_EVAL_OPERATION_ID'],
+                 str(Path(env['GOOSE_PATH_ROOT']) / 'data/sessions/sessions.db'),
+                 '--', executable, *arguments]
+    executable = str(python)
+if env.get('HARNESS_EVAL_HEADLESS') == '1':
+    completed = subprocess.run([executable, *arguments], env=env)
+    if completed.returncode:
+        raise SystemExit(completed.returncode)
+    if env.get('HARNESS_EVAL_REVIEW_ITERATION'):
+        verification = subprocess.run([str(python), '-c',
+            "from desktop_harness.evals import Evaluations; import sys; item=Evaluations().read(sys.argv[1], int(sys.argv[2])); sys.exit(0 if item.get('review') and item['operation_id']==sys.argv[3] else 3)",
+            env['HARNESS_EVAL_PROJECT'], env['HARNESS_EVAL_REVIEW_ITERATION'], env['HARNESS_EVAL_OPERATION_ID']], env=env)
+        if verification.returncode:
+            print('Review stopped without a recorded quality review.', file=sys.stderr)
+        raise SystemExit(verification.returncode)
+    status = subprocess.run([str(python), '-m', 'desktop_harness.cli', 'eval-status',
+                             env['HARNESS_EVAL_PROJECT']], env=env, capture_output=True, text=True)
+    if status.returncode:
+        print('Eval stopped: project halted or status unavailable.', file=sys.stderr)
+        raise SystemExit(status.returncode)
+    context = json.loads(status.stdout)
+    if (not context['recent_iterations'] or context['recent_iterations'][-1]['state'] != 'assessed'
+            or context['recent_iterations'][-1]['operation_id'] != env['HARNESS_EVAL_OPERATION_ID']):
+        print('Eval stopped without a recorded assessment; recover the existing iteration.', file=sys.stderr)
+        raise SystemExit(3)
+else:
+    os.execve(executable, [executable, *arguments], env)

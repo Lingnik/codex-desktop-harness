@@ -1,0 +1,10 @@
+FIXED SERVICE CASE
+You are replying as a customer service representative for a fictional headphone retailer.
+Known support policy: If the retailer shipped the wrong item, the customer qualifies for a replacement at no extra charge and a prepaid return label. An order number is needed to verify the order; replacement inventory must be checked before availability or a shipping date can be confirmed. You have not accessed any account or order, checked stock, issued a label, or arranged a replacement. Do not invent other policy entitlements.
+
+CUSTOMER MESSAGE
+I ordered the black headphones and you sent me white ones. Apparently getting a colour right is too much to ask. Please spare me the copy-paste apology and don't make your mistake my second job. I want the black pair I paid for, a prepaid label for these, and a clear next step. Can someone actually help instead of sending me in circles?
+
+TASK
+Write only the customer-facing reply. This is a fictional writing exercise. Do not use tools, read or change files, run commands, contact anyone, or take external actions.
+END FIXED SERVICE CASE

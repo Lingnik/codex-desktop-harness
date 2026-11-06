@@ -1,0 +1,21 @@
+Goal: Obtain an actionable, fair support-ticket scheduling policy for a team of two agents.
+
+Scenario:
+Urgent tickets may arrive continuously. Ordinary tickets must still receive
+service, and the policy must remain usable without special scheduling software.
+
+Acceptance criteria:
+1. Define how urgent and ordinary tickets are classified.
+2. Give a concrete mechanism preventing ordinary-ticket starvation.
+3. Explain a minimum service opportunity for ordinary work and its assumptions.
+4. Describe what the operator measures and adjusts.
+5. State at least one tradeoff honestly; avoid unconditional guarantees that
+   assume unlimited capacity or predictable ticket duration.
+
+Task scope: discussion only. Do not ask Codex to use tools, run commands, read
+files or change files. Include the scenario and the discussion-only restriction
+in every one-shot prompt you submit. Each iteration starts a fresh chat.
+
+Judging: pass means all criteria are satisfied with no material contradiction;
+partial means useful but at least one criterion is missing or weak; fail means
+incorrect or unusable. An optional 0–5 score should explain its basis in evidence.

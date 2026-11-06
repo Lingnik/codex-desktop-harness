@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Bounded same-model host comparison. No tools, GUI actions, or server configuration writes."""
+import argparse
+import datetime
+import hashlib
+import json
+from pathlib import Path
+import statistics
+import time
+import urllib.request
+
+
+def api(host, route, body=None, timeout=180):
+    request = urllib.request.Request(host.rstrip('/') + route,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--mac', default='http://127.0.0.1:11434')
+    parser.add_argument('--dragon', required=True, help='Dragon Ollama URL, such as http://dragon.example:11434')
+    parser.add_argument('--model', default='qwen3.8:27b')
+    parser.add_argument('--contexts', type=int, nargs='+', default=[8192, 32768])
+    parser.add_argument('--trials', type=int, default=2)
+    parser.add_argument('--output', default='work/speed-benchmark/results.json')
+    args = parser.parse_args()
+    if not 1 <= args.trials <= 5 or any(not 4096 <= c <= 131072 for c in args.contexts):
+        parser.error('Use 1–5 warm trials and 4096–131072 context.')
+    report = {'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'model': args.model, 'contexts': args.contexts, 'warm_trials': args.trials,
+              'settings': {'think': False, 'num_predict': 128, 'temperature': 0, 'seed': 42},
+              'hosts': {}, 'runs': []}
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    def save():
+        temporary = output.with_suffix('.tmp')
+        temporary.write_text(json.dumps(report, indent=2) + '\n')
+        temporary.replace(output)
+    for name, host in [('mac', args.mac), ('dragon', args.dragon)]:
+        models = api(host, '/api/tags')['models']
+        model = next(m for m in models if m['name'] == args.model)
+        report['hosts'][name] = {'url': host, 'version': api(host, '/api/version'),
+                                  'model': model, 'ps_before': api(host, '/api/ps')}
+    if len({h['model']['digest'] for h in report['hosts'].values()}) != 1:
+        parser.error('Model digests differ; use matching artifacts for this benchmark.')
+    save()
+    facts = '\n'.join(f'Record {i}: urgent containment and incident work are parallel; ordinary tickets retain a reserved service slot; state proposed actions without claiming execution.' for i in range(1, 41))
+    for context in args.contexts:
+        for trial in range(args.trials + 1):
+            # Unique leading text prevents previous trials from reusing almost all prompt tokens.
+            # The two endpoints receive exactly the same request in each paired trial.
+            prompt = f'Benchmark case {context}-{trial}.\n' + facts + '\nExplain an operational ticket triage plan in at least 300 words. Use the records as background. No tools or external actions.'
+            request = {'model': args.model, 'stream': False, 'think': False, 'keep_alive': '10m',
+                       'messages': [{'role': 'user', 'content': prompt}],
+                       'options': {'num_ctx': context, 'num_predict': 128, 'temperature': 0, 'seed': 42}}
+            order = ['mac', 'dragon'] if trial % 2 == 0 else ['dragon', 'mac']
+            for name in order:
+                host = report['hosts'][name]['url']
+                run = {'host': name, 'context': context, 'trial': trial,
+                       'phase': 'first_request_at_context' if trial == 0 else 'warm',
+                       'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
+                started = time.monotonic()
+                try:
+                    result = api(host, '/api/chat', request)
+                    run.update({k: result.get(k) for k in ['done_reason', 'total_duration', 'load_duration',
+                                'prompt_eval_count', 'prompt_eval_duration', 'eval_count', 'eval_duration']})
+                    for prefix in ['prompt_eval', 'eval']:
+                        duration = result.get(prefix + '_duration', 0)
+                        run[prefix + '_tokens_per_second'] = result.get(prefix + '_count', 0) / (duration / 1e9) if duration else None
+                    run['message'] = result.get('message')
+                    run['ps_after'] = api(host, '/api/ps', timeout=15)
+                except Exception as error:
+                    run['error'] = str(error)
+                run['wall_seconds'] = time.monotonic() - started
+                report['runs'].append(run)
+                save()
+                print(json.dumps({k: run.get(k) for k in ['host', 'context', 'trial', 'wall_seconds', 'load_duration', 'prompt_eval_tokens_per_second', 'eval_tokens_per_second', 'error']}), flush=True)
+                if 'error' in run:
+                    print('Stopped after failed request; partial results preserved. No automatic retry.', flush=True)
+                    return 1
+    report['summary'] = []
+    for context in args.contexts:
+        for name in report['hosts']:
+            runs = [r for r in report['runs'] if r['host'] == name and r['context'] == context and r['phase'] == 'warm']
+            report['summary'].append({'host': name, 'context': context,
+                **{key: statistics.median(r[key] for r in runs) for key in ['wall_seconds', 'prompt_eval_tokens_per_second', 'eval_tokens_per_second']}})
+    report['finished_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    save()
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
